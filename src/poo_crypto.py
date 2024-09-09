@@ -128,7 +128,7 @@ if __name__ == '__main__':
 
             # Attendre 10 minutes avant de récupérer les nouvelles données
             print("Attente de 10 minutes avant la prochaine mise à jour...")
-            time.sleep(60)  # 600 secondes = 10 minutes
+            time.sleep(600)  # 600 secondes = 10 minutes
 
     except KeyboardInterrupt:
         # Si l'utilisateur interrompt le programme (Ctrl+C), on affiche les résultats finaux
