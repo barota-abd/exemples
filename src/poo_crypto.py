@@ -84,6 +84,7 @@ class TradingSimulator:
             self.balance += usd_gained
             self.bitcoin_balance = 0
             print(f"{timestamp}: Vente de BTC à {current_price:.2f} USD.")
+            print(f"Montant global après la vente : {self.balance:.2f} USD")
 
         # Trace des gains ou pertes
         total_value = self.balance + self.bitcoin_balance * current_price
