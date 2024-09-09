@@ -1,9 +1,10 @@
 import logging
-import os
 import time
 from datetime import datetime
+from sklearn.ensemble import RandomForestRegressor
 import pandas as pd
 import requests
+import numpy as np
 
 # Définitions des niveaux de log personnalisés
 LOG_BUY = 25
@@ -75,7 +76,7 @@ for handler in logging.getLogger().handlers:
 # Initialisation du logger
 logger = logging.getLogger(__name__)
 
-# Les autres classes restent inchangées (CoinbaseAPI, CoinGeckoAPI, etc.)
+# Classe CoinbaseAPI
 class CoinbaseAPI:
     def __init__(self):
         self.url = 'https://api.coinbase.com/v2/prices/spot?currency=USD'
@@ -85,6 +86,7 @@ class CoinbaseAPI:
         data = response.json()
         return float(data['data']['amount'])
 
+# Classe CoinGeckoAPI
 class CoinGeckoAPI:
     def __init__(self, crypto_id='bitcoin'):
         self.crypto_id = crypto_id
@@ -115,18 +117,78 @@ class CoinGeckoAPI:
             logger.error(f"Erreur lors de la requête à l'API CoinGecko : {e}")
             return None
 
+# Classe SimpleStrategyAI
 class SimpleStrategyAI:
-    def analyze(self, market_data):
-        short_window = market_data['price'].rolling(window=5).mean().iloc[-1]
-        long_window = market_data['price'].rolling(window=15).mean().iloc[-1]
+    def __init__(self, tolerance=0.002, rsi_window=14, macd_short_window=12, macd_long_window=26, macd_signal_window=9):
+        self.model = RandomForestRegressor(n_estimators=100, random_state=42)
+        self.tolerance = tolerance
+        self.rsi_window = rsi_window
+        self.macd_short_window = macd_short_window
+        self.macd_long_window = macd_long_window
+        self.macd_signal_window = macd_signal_window
 
-        if short_window > long_window:
-            return 'buy'
-        elif short_window < long_window:
-            return 'sell'
+    def train(self, market_data):
+        market_data['time_index'] = np.arange(len(market_data))
+        X = market_data['time_index'].values.reshape(-1, 1)
+        y = market_data['price'].values
+        self.model.fit(X, y)
+
+    def predict(self, market_data, future_steps=1):
+        future_index = np.array([[len(market_data) + future_steps]])
+        predicted_price = self.model.predict(future_index)
+        return predicted_price[0]
+
+    def calculate_rsi(self, market_data):
+        delta = market_data['price'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=self.rsi_window).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=self.rsi_window).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    def calculate_macd(self, market_data):
+        exp1 = market_data['price'].ewm(span=self.macd_short_window, adjust=False).mean()
+        exp2 = market_data['price'].ewm(span=self.macd_long_window, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=self.macd_signal_window, adjust=False).mean()
+        return macd, signal
+
+    def analyze(self, market_data):
+        self.train(market_data)
+        predicted_price = self.predict(market_data, future_steps=1)
+        current_price = market_data['price'].iloc[-1]
+
+        rsi = self.calculate_rsi(market_data).iloc[-1]
+        macd, signal = self.calculate_macd(market_data)
+        macd_value = macd.iloc[-1]
+        signal_value = signal.iloc[-1]
+
+        logger.info(f"Current Price : {current_price:.2f} USD")
+        logger.info(f"Predicted Price : {predicted_price:.2f} USD")
+        logger.info(f"RSI : {rsi:.2f}")
+        logger.info(f"MACD : {macd_value:.2f}, Signal : {signal_value:.2f}")
+
+        percentage_change = abs(predicted_price - current_price) / current_price
+
+        if rsi < 40 and percentage_change > self.tolerance:
+            if macd_value > signal_value:
+                logger.buy("Buy (RSI indicates oversold and MACD confirms)")
+                return 'buy'
+            else:
+                logger.info("Hold (RSI indicates oversold but MACD not confirming)")
+                return 'hold'
+        elif rsi > 60 and percentage_change > self.tolerance:
+            if macd_value < signal_value:
+                logger.sell("Sell (RSI indicates overbought and MACD confirms)")
+                return 'sell'
+            else:
+                logger.info("Hold (RSI indicates overbought but MACD not confirming)")
+                return 'hold'
         else:
+            logger.info("Hold (No significant indicators for buy/sell)")
             return 'hold'
 
+# Classe TradingSimulator
 class TradingSimulator:
     def __init__(self, initial_balance=1000):
         self.balance = initial_balance
@@ -151,7 +213,6 @@ class TradingSimulator:
             logger.sell(f"{timestamp}: Vente de BTC à {current_price:.2f} USD.")
             logger.info(f"Montant global après la vente : {self.balance:.2f} USD")
 
-        # Trace des gains ou pertes
         total_value = self.balance + self.bitcoin_balance * current_price
         gain_loss = total_value - self.initial_balance
         if gain_loss >= 0:
@@ -178,7 +239,7 @@ if __name__ == '__main__':
         logger.error("Impossible de récupérer les données historiques.")
         exit()
 
-    ai_strategy = SimpleStrategyAI()
+    ai_strategy = SimpleStrategyAI(tolerance=0.002, rsi_window=14, macd_short_window=12, macd_long_window=26, macd_signal_window=9)
     simulator = TradingSimulator(initial_balance=1000)
 
     try:
@@ -194,7 +255,7 @@ if __name__ == '__main__':
             simulator.trade(decision, current_price, datetime.now())
 
             logger.info("Attente de 10 minutes avant la prochaine mise à jour...")
-            time.sleep(4)
+            time.sleep(6)  # Attente de 10 minutes
 
     except KeyboardInterrupt:
         logger.info("Programme interrompu. Affichage des résultats finaux.")
